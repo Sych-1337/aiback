@@ -4,6 +4,7 @@ export interface AppConfig {
   id: AppId;
   name: string;
   openaiKeyEnv: string;
+  fallbackOpenAiKeyEnv?: string;
 }
 
 const configs: Record<AppId, AppConfig> = {
@@ -11,11 +12,13 @@ const configs: Record<AppId, AppConfig> = {
     id: 'tarot',
     name: 'Mystic Tarot AI',
     openaiKeyEnv: 'OPENAI_API_KEY_TAROT',
+    fallbackOpenAiKeyEnv: 'OPENAI_API_KEY',
   },
   plant: {
     id: 'plant',
     name: 'Plant Doctor',
     openaiKeyEnv: 'OPENAI_API_KEY_PLANT',
+    fallbackOpenAiKeyEnv: 'OPENAI_API_KEY',
   },
   default: {
     id: 'default',
@@ -31,5 +34,9 @@ export function getAppConfig(appId?: string | null): AppConfig {
 
 export function getOpenAiApiKey(appId?: string | null): string | undefined {
   const cfg = getAppConfig(appId);
-  return process.env[cfg.openaiKeyEnv];
+  return process.env[cfg.openaiKeyEnv] || (cfg.fallbackOpenAiKeyEnv ? process.env[cfg.fallbackOpenAiKeyEnv] : undefined);
+}
+
+export function hasOpenAiApiKey(appId?: string | null): boolean {
+  return Boolean(getOpenAiApiKey(appId));
 }

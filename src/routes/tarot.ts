@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { randomUUID } from 'crypto';
 
 import { GptTarotService } from '../services/gptTarotService';
 
@@ -6,28 +7,48 @@ const service = new GptTarotService();
 
 export const tarotRouter = Router();
 
-// Demo endpoint: structured AI interpretation for 3-card reading (no real GPT yet)
-tarotRouter.post('/v1/readings/demo-interpret', async (req: Request, res: Response) => {
+async function handleInterpret(req: Request, res: Response) {
   try {
-    const appIdHeader = (req.header('x-app-id') || 'tarot') as string;
+    const requestId = randomUUID();
+    const appIdHeader = String(req.header('x-app-id') || 'tarot');
     const { question, topic, spread, cards, tone } = req.body ?? {};
 
-    if (!question || !Array.isArray(cards) || cards.length === 0) {
+    const normalizedQuestion = typeof question === 'string' ? question.trim() : '';
+    const normalizedCards = Array.isArray(cards)
+      ? cards.map((card) => String(card).trim()).filter(Boolean).slice(0, 3)
+      : [];
+    const normalizedTopic =
+      typeof topic === 'string' && topic.trim().length > 0 ? topic.trim() : 'general';
+    const normalizedSpread =
+      typeof spread === 'string' && spread.trim().length > 0 ? spread.trim() : 'ppf';
+    const normalizedTone =
+      typeof tone === 'string' && tone.trim().length > 0 ? tone.trim() : 'soft';
+
+    if (!normalizedQuestion || normalizedQuestion.length < 10) {
       return res.status(400).json({
-        error: 'question and cards[] are required',
+        error: 'question must be at least 10 characters',
+        requestId,
+      });
+    }
+
+    if (normalizedCards.length === 0) {
+      return res.status(400).json({
+        error: 'cards[] are required',
+        requestId,
       });
     }
 
     const interpretation = await service.interpretThreeCard({
       appId: appIdHeader as any,
-      question,
-      topic: topic ?? 'general',
-      spread: spread ?? 'ppf',
-      cards,
-      tone: tone ?? 'soft',
+      question: normalizedQuestion,
+      topic: normalizedTopic,
+      spread: normalizedSpread,
+      cards: normalizedCards,
+      tone: normalizedTone,
     });
 
     res.json({
+      requestId,
       overall: {
         title: interpretation.overallTitle,
         text: interpretation.overallText,
@@ -66,7 +87,14 @@ tarotRouter.post('/v1/readings/demo-interpret', async (req: Request, res: Respon
       },
     });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'internal_error' });
+    const requestId = randomUUID();
+    console.error('tarot interpret failed', {
+      requestId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    res.status(500).json({ error: 'internal_error', requestId });
   }
-});
+}
+
+tarotRouter.post('/v1/readings/interpret', handleInterpret);
+tarotRouter.post('/v1/readings/demo-interpret', handleInterpret);
