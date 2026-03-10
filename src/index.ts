@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import express from 'express';
+import express, { Request, Response } from 'express';
 import cors from 'cors';
 
 import { tarotRouter } from './routes/tarot';
@@ -10,7 +10,7 @@ const port = process.env.PORT || 4000;
 app.use(cors());
 app.use(express.json());
 
-app.get('/health', (_req, res) => {
+app.get('/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', service: 'ai-backend' });
 });
 

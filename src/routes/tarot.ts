@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, Request, Response } from 'express';
 
 import { GptTarotService } from '../services/gptTarotService';
 
@@ -7,7 +7,7 @@ const service = new GptTarotService();
 export const tarotRouter = Router();
 
 // Demo endpoint: structured AI interpretation for 3-card reading (no real GPT yet)
-tarotRouter.post('/v1/readings/demo-interpret', async (req, res) => {
+tarotRouter.post('/v1/readings/demo-interpret', async (req: Request, res: Response) => {
   try {
     const appIdHeader = (req.header('x-app-id') || 'tarot') as string;
     const { question, topic, spread, cards, tone } = req.body ?? {};
