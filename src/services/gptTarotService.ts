@@ -26,16 +26,19 @@ export class GptTarotService {
       return this.safeSupportInterpretation(params);
     }
 
+    let lastFailureReason: string | undefined;
     try {
       const ai = await this.callOpenAi(params);
       if (ai) {
         return this.fromAiJson(ai, params);
       }
+      lastFailureReason = 'OpenAI key or transport is unavailable for this app.';
     } catch (err) {
-      console.error('AI tarot interpretation failed, falling back safely:', this.describeError(err));
+      lastFailureReason = this.describeError(err);
+      console.error('AI tarot interpretation failed, falling back safely:', lastFailureReason);
     }
 
-    return this.demoInterpretation(params);
+    return this.demoInterpretation(params, lastFailureReason);
   }
 
   private async callOpenAi(params: {
@@ -58,8 +61,7 @@ export class GptTarotService {
       return undefined;
     }
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
+    const timeoutMs = this.resolveTimeoutMs();
 
     const prompt = `
 Ты — продвинутый таролог-ассистент на русском языке. Проанализируй расклад из трёх карт для пользователя.
@@ -114,29 +116,70 @@ export class GptTarotService {
 - Тон ответа: "${params.tone}" (soft / clear / mystic, но текст всегда бережный и поддерживающий).
 `;
 
+    const models = this.resolveModels();
+    let lastError: unknown;
+
+    for (const model of models) {
+      try {
+        return await this.callOpenAiWithModel({
+          fetchFn,
+          apiKey,
+          model,
+          prompt,
+          timeoutMs,
+        });
+      } catch (err) {
+        lastError = err;
+        console.error(`OpenAI attempt failed for model ${model}:`, this.describeError(err));
+      }
+    }
+
+    if (lastError) {
+      throw lastError;
+    }
+
+    return undefined;
+  }
+
+  private async callOpenAiWithModel(params: {
+    fetchFn: any;
+    apiKey: string;
+    model: string;
+    prompt: string;
+    timeoutMs: number;
+  }): Promise<any> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), params.timeoutMs);
+
     let response: any;
     try {
-      response = await fetchFn('https://api.openai.com/v1/chat/completions', {
+      response = await params.fetchFn('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
+          Authorization: `Bearer ${params.apiKey}`,
         },
         body: JSON.stringify({
-          model: process.env.OPENAI_MODEL_TAROT || 'gpt-4.1-mini',
+          model: params.model,
           temperature: 0.7,
+          max_tokens: 1200,
           messages: [
             {
               role: 'system',
               content:
                 'You are a careful tarot assistant that returns strict JSON only.',
             },
-            { role: 'user', content: prompt },
+            { role: 'user', content: params.prompt },
           ],
           response_format: { type: 'json_object' },
         }),
         signal: controller.signal,
       });
+    } catch (err) {
+      if ((err as any)?.name === 'AbortError') {
+        throw new Error(`OpenAI timeout after ${params.timeoutMs}ms`);
+      }
+      throw err;
     } finally {
       clearTimeout(timeout);
     }
@@ -144,7 +187,7 @@ export class GptTarotService {
     if (!response.ok) {
       const text = await response.text();
       console.error('OpenAI error response:', text.slice(0, 500));
-      throw new Error(`OpenAI API error: ${response.status}`);
+      throw new Error(`OpenAI API error ${response.status}: ${text.slice(0, 200)}`);
     }
 
     const data: any = await response.json();
@@ -353,6 +396,22 @@ export class GptTarotService {
     return String(err);
   }
 
+  private resolveModels(): string[] {
+    const configured = (process.env.OPENAI_MODEL_TAROT || 'gpt-4o-mini,gpt-4.1-mini')
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+    return [...new Set(configured)];
+  }
+
+  private resolveTimeoutMs(): number {
+    const raw = Number(process.env.OPENAI_TIMEOUT_MS || '35000');
+    if (Number.isNaN(raw) || raw < 5000) {
+      return 35000;
+    }
+    return raw;
+  }
+
   private demoInterpretation(params: {
     appId?: AppId;
     question: string;
@@ -360,10 +419,14 @@ export class GptTarotService {
     spread: string;
     cards: string[];
     tone: string;
-  }): TarotInterpretation {
+  }, failureReason?: string): TarotInterpretation {
     const { cards } = params;
 
     const energy = new EnergyScores(70, 50, 80, 30, 65);
+    const demoReason = failureReason?.trim();
+    const demoText = demoReason
+      ? `Сейчас backend переключился в демо-режим, потому что реальный AI-запрос не завершился успешно: ${demoReason}. Как только проблема с OpenAI или сетью исчезнет, здесь снова будут живые тексты по вопросу.`
+      : 'Сейчас используется демонстрационный режим без запроса к AI. Как только появится ключ OpenAI, здесь будут живые тексты, собранные под твой вопрос.';
 
     const cardExplanations = cards.map(
       (name, index) =>
@@ -380,7 +443,7 @@ export class GptTarotService {
 
     return new TarotInterpretation(
       'Чтение в демо-режиме',
-      'Сейчас используется демонстрационный режим без запроса к AI. Как только появится ключ OpenAI, здесь будут живые тексты, собранные под твой вопрос.',
+      demoText,
       cardExplanations,
       cards.slice(0, 2),
       combinations,
@@ -394,7 +457,7 @@ export class GptTarotService {
         'Что я пока не замечаю в этой ситуации?',
       ],
       0.3,
-      ['Используется демо-режим без настоящего AI.'],
+      ['Используется демо-режим без настоящего AI.', demoReason ?? ''].filter(Boolean),
       'Карты и интерпретации — инструмент саморефлексии, а не предсказания будущего. В сложных ситуациях обращайся за помощью к живым специалистам.',
     );
   }
