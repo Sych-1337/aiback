@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { randomUUID } from 'crypto';
 
 import { GptTarotService } from '../services/gptTarotService';
+import { getChatReply } from '../services/chatService';
 
 const service = new GptTarotService();
 
@@ -98,3 +99,49 @@ async function handleInterpret(req: Request, res: Response) {
 
 tarotRouter.post('/v1/readings/interpret', handleInterpret);
 tarotRouter.post('/v1/readings/demo-interpret', handleInterpret);
+
+async function handleChat(req: Request, res: Response) {
+  const requestId = randomUUID();
+  const appIdHeader = String(req.header('x-app-id') || 'tarot');
+  try {
+    const body = req.body ?? {};
+    const messages = Array.isArray(body.messages)
+      ? body.messages
+          .filter((m: any) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
+          .map((m: any) => ({ role: m.role as 'user' | 'assistant', content: String(m.content).trim() }))
+      : [];
+    const tarologist = body.tarologist && typeof body.tarologist.name === 'string'
+      ? {
+          name: String(body.tarologist.name).trim(),
+          voiceStyle: typeof body.tarologist.voiceStyle === 'string' ? String(body.tarologist.voiceStyle).trim() : 'soft',
+        }
+      : { name: 'Guide', voiceStyle: 'soft' };
+    const lastReading =
+      body.lastReading && typeof body.lastReading.question === 'string'
+        ? { question: String(body.lastReading.question).trim() }
+        : undefined;
+
+    if (messages.length === 0) {
+      return res.status(400).json({ error: 'messages array is required with at least one message', requestId });
+    }
+
+    const text = await getChatReply({
+      appId: appIdHeader as any,
+      request: { messages, tarologist, lastReading: lastReading || null },
+    });
+
+    res.json({ requestId, text });
+  } catch (err) {
+    console.error('chat failed', {
+      requestId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    const status = err instanceof Error && err.message.includes('timeout') ? 504 : 500;
+    res.status(status).json({
+      error: err instanceof Error ? err.message : 'internal_error',
+      requestId,
+    });
+  }
+}
+
+tarotRouter.post('/v1/chat', handleChat);
